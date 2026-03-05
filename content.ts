@@ -51,7 +51,8 @@ export type SiteContent = {
 };
 
 export const LOCAL_STORAGE_CONTENT_KEY = 'be-aesthetic:dashboard-content:v1';
-export const REMOTE_SITE_CONTENT_ROW_ID = 'main-site';
+export const REMOTE_SITE_CONTENT_ROW_ID = 'home';
+const LEGACY_REMOTE_SITE_CONTENT_ROW_ID = 'main-site';
 
 export const DEFAULT_SITE_CONTENT: SiteContent = {
     headerNav: [
@@ -100,7 +101,7 @@ export const DEFAULT_SITE_CONTENT: SiteContent = {
     locations: LOCATIONS_DATA,
 };
 
-const ensureContentShape = (input: Partial<SiteContent> | null | undefined): SiteContent => {
+export const ensureContentShape = (input: Partial<SiteContent> | null | undefined): SiteContent => {
     const safe = input ?? {};
     const mergedTeam = safe.team?.length
         ? [
@@ -176,15 +177,24 @@ export const loadSiteContentFromRemote = async (): Promise<SiteContent | null> =
 
     const { data, error } = await supabase
         .from('site_content')
-        .select('content')
-        .eq('id', REMOTE_SITE_CONTENT_ROW_ID)
-        .maybeSingle();
+        .select('id, content, updated_at')
+        .in('id', [REMOTE_SITE_CONTENT_ROW_ID, LEGACY_REMOTE_SITE_CONTENT_ROW_ID])
+        .order('updated_at', { ascending: false, nullsFirst: false });
 
-    if (error || !data?.content) {
+    if (error || !data?.length) {
         return null;
     }
 
-    return ensureContentShape(data.content as Partial<SiteContent>);
+    const preferredRow =
+        data.find((row) => row.id === REMOTE_SITE_CONTENT_ROW_ID) ??
+        data.find((row) => row.id === LEGACY_REMOTE_SITE_CONTENT_ROW_ID) ??
+        data[0];
+
+    if (!preferredRow?.content) {
+        return null;
+    }
+
+    return ensureContentShape(preferredRow.content as Partial<SiteContent>);
 };
 
 export const saveSiteContentToRemote = async (content: SiteContent): Promise<boolean> => {
@@ -196,6 +206,7 @@ export const saveSiteContentToRemote = async (content: SiteContent): Promise<boo
         {
             id: REMOTE_SITE_CONTENT_ROW_ID,
             content,
+            updated_at: new Date().toISOString(),
         },
         { onConflict: 'id' }
     );

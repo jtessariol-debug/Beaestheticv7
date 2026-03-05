@@ -14,6 +14,7 @@ type AdminDashboardProps = {
     content: SiteContent;
     onChange: (next: SiteContent) => void;
     onReset: () => void;
+    saveStatus: 'saving' | 'saved' | 'error';
 };
 
 type DashboardTab = 'general' | 'services' | 'technologies' | 'team' | 'testimonials' | 'locations';
@@ -85,7 +86,7 @@ const ImageUploadInput: React.FC<ImageUploadInputProps> = ({ label, value, onCha
     );
 };
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ content, onChange, onReset }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ content, onChange, onReset, saveStatus }) => {
     const [activeTab, setActiveTab] = useState<DashboardTab>('general');
     const [serviceSearch, setServiceSearch] = useState('');
     const [selectedServiceId, setSelectedServiceId] = useState<number | null>(content.services[0]?.id ?? null);
@@ -116,6 +117,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ content, onChange, onRe
     const selectedTeamMember = content.team.find((member) => member.id === selectedTeamId) ?? null;
     const selectedTestimonial = content.testimonials.find((testimonial) => testimonial.id === selectedTestimonialId) ?? null;
     const selectedLocation = content.locations.find((location) => location.id === selectedLocationId) ?? null;
+    const saveStatusLabel = saveStatus === 'saving' ? 'Saving...' : saveStatus === 'error' ? 'Error saving' : 'Saved';
+    const saveStatusClass =
+        saveStatus === 'saving'
+            ? 'text-amber-700'
+            : saveStatus === 'error'
+                ? 'text-red-700'
+                : 'text-emerald-700';
 
     const uploadImageForField = async (fieldKey: string, file: File, onUploaded: (url: string) => void) => {
         if (!file.type.startsWith('image/')) {
@@ -168,6 +176,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ content, onChange, onRe
                             <p className="mt-2 text-sm text-brand-gray">
                                 Cambia textos, imagenes y bloques visuales del sitio. Los cambios se guardan automaticamente.
                             </p>
+                            <p className={`mt-1 text-xs font-medium ${saveStatusClass}`}>{saveStatusLabel}</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-3">
                             <a
