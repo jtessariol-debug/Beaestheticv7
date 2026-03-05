@@ -27,3 +27,5 @@ View your app in AI Studio: https://ai.studio/apps/drive/1txSSs3Nkw0JuSsg7alZcuu
 - Login: `/#login`
 - Dashboard: `/#admin`
 - Setup SQL/policies: [SUPABASE_SETUP.md](SUPABASE_SETUP.md)
+
+# Beaestheticv3
