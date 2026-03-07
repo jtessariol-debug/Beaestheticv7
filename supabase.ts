@@ -4,6 +4,9 @@ import { Service, ServiceCategory } from './types';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
+console.log("SUPABASE URL:", supabaseUrl)
+console.log("SUPABASE KEY:", supabaseAnonKey)
+
 const hasValidUrl = Boolean(
     supabaseUrl &&
         /^https?:\/\//i.test(supabaseUrl) &&
