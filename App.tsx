@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import Header from './components/Header';
 import Hero from './components/Hero';
@@ -35,7 +35,7 @@ const getViewFromHash = (): AppView => {
 };
 
 const App: React.FC = () => {
-    const [siteContent, setSiteContent] = useState(loadSiteContent);
+    const [siteContent, setSiteContent] = useState(loadSiteContent());
     const [serviceIdFromHash, setServiceIdFromHash] = useState<number | null>(null);
     const [view, setView] = useState<AppView>(getViewFromHash());
     const [session, setSession] = useState<Session | null>(null);
@@ -44,73 +44,57 @@ const App: React.FC = () => {
     const [remoteContentReady, setRemoteContentReady] = useState<boolean>(!supabase);
     const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
     const lastRemoteSnapshotRef = useRef<string>(JSON.stringify(siteContent));
+    const isMountedRef = useRef(true);
+
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    const fetchAndApplyRemoteContent = useCallback(async (source: string) => {
+        const { data, error } = await getSiteContent('home');
+        console.log("[supabase][site_content] getSiteContent('home')", {
+            source,
+            data,
+            error,
+        });
+
+        if (!isMountedRef.current) {
+            return { data, error };
+        }
+
+        if (error || !data?.content) {
+            if (error) {
+                console.error("[supabase][site_content] getSiteContent('home') error", {
+                    source,
+                    error,
+                });
+            }
+            return { data, error };
+        }
+
+        const remoteContent = ensureContentShape(data.content as Partial<typeof siteContent>);
+        const snapshot = JSON.stringify(remoteContent);
+        lastRemoteSnapshotRef.current = snapshot;
+        setSiteContent(remoteContent);
+        saveLocalSiteContent(remoteContent);
+
+        return { data, error };
+    }, []);
 
     useEffect(() => {
         saveLocalSiteContent(siteContent);
     }, [siteContent]);
 
     useEffect(() => {
-        if (!remoteContentReady || !supabase || view !== 'admin-content') {
-            return;
-        }
-
-        const snapshot = JSON.stringify(siteContent);
-        if (lastRemoteSnapshotRef.current === snapshot) {
-            return;
-        }
-
-        setSaveStatus('saving');
-        const timer = window.setTimeout(() => {
-            void (async () => {
-                const { error } = await saveRemoteSiteContent('home', siteContent);
-                if (error) {
-                    setSaveStatus('error');
-                    return;
-                }
-                lastRemoteSnapshotRef.current = snapshot;
-                setSaveStatus('saved');
-            })();
-        }, 600);
-
-        return () => window.clearTimeout(timer);
-    }, [siteContent, remoteContentReady, view]);
-
-    useEffect(() => {
-        let active = true;
-
-        const bootstrapRemoteContent = async () => {
-            const { data, error } = await getSiteContent('home');
-            if (!active) {
-                return;
-            }
-
-            if (error || !data?.content) {
-                setRemoteContentReady(true);
-                return;
-            }
-
-            const remoteContent = ensureContentShape(data.content as Partial<typeof siteContent>);
-            const snapshot = JSON.stringify(remoteContent);
-            lastRemoteSnapshotRef.current = snapshot;
-            setSiteContent(remoteContent);
-            saveLocalSiteContent(remoteContent);
-            setRemoteContentReady(true);
-        };
-
-        void bootstrapRemoteContent();
-
-        return () => {
-            active = false;
-        };
-    }, []);
-
-    useEffect(() => {
+        console.log("REALTIME EFFECT RUNNING");
         if (!supabase) {
             return;
         }
 
         const channel = supabase
-            .channel('site_content_updates')
+            .channel('site_content_realtime')
             .on(
                 'postgres_changes',
                 {
@@ -119,35 +103,34 @@ const App: React.FC = () => {
                     table: 'site_content',
                     filter: 'id=eq.home',
                 },
-                (payload) => {
+                async (payload) => {
+                    console.log('REALTIME PAYLOAD:', payload);
+
                     const nextRaw = (payload.new as { content?: unknown } | null)?.content;
                     if (!nextRaw) {
                         return;
                     }
 
                     const normalized = ensureContentShape(nextRaw as Partial<typeof siteContent>);
-                    const incomingSnapshot = JSON.stringify(normalized);
-                    if (incomingSnapshot === lastRemoteSnapshotRef.current) {
+                    const snapshot = JSON.stringify(normalized);
+
+                    if (snapshot === lastRemoteSnapshotRef.current) {
+                        console.log("Skipping identical snapshot");
                         return;
                     }
 
-                    lastRemoteSnapshotRef.current = incomingSnapshot;
-                    setSiteContent((prev) => {
-                        if (JSON.stringify(prev) === incomingSnapshot) {
-                            return prev;
-                        }
-                        saveLocalSiteContent(normalized);
-                        return normalized;
-                    });
-                    setSaveStatus('saved');
+                    console.log("Applying realtime update");
+                    await fetchAndApplyRemoteContent("realtime");
                 }
             )
-            .subscribe();
+            .subscribe((status) => {
+                console.log("REALTIME STATUS:", status);
+            });
 
         return () => {
-            void supabase.removeChannel(channel);
+            supabase.removeChannel(channel);
         };
-    }, []);
+    }, [fetchAndApplyRemoteContent]);
 
     useEffect(() => {
         if (!supabase) {
@@ -199,6 +182,11 @@ const App: React.FC = () => {
         () => (serviceIdFromHash == null ? null : siteContent.services.find((service) => service.id === serviceIdFromHash) || null),
         [serviceIdFromHash, siteContent.services]
     );
+
+    const handleForceRefreshFromSupabase = useCallback(() => {
+        console.log("[supabase][site_content] manual force refresh requested");
+        void fetchAndApplyRemoteContent('manual-force-refresh');
+    }, [fetchAndApplyRemoteContent]);
 
     useEffect(() => {
         if (selectedService || view !== 'site') return;
@@ -254,12 +242,23 @@ const App: React.FC = () => {
         }
 
         return (
-            <AdminDashboard
-                content={siteContent}
-                onChange={setSiteContent}
-                onReset={() => setSiteContent(resetSiteContent())}
-                saveStatus={saveStatus}
-            />
+            <>
+                <div className="fixed bottom-4 right-4 z-50">
+                    <button
+                        type="button"
+                        onClick={handleForceRefreshFromSupabase}
+                        className="rounded-md border border-brand-brown/30 bg-white px-3 py-2 text-xs font-medium text-brand-brown shadow-sm hover:bg-brand-beige"
+                    >
+                        Force refresh from Supabase
+                    </button>
+                </div>
+                <AdminDashboard
+                    content={siteContent}
+                    onChange={setSiteContent}
+                    onReset={() => setSiteContent(resetSiteContent())}
+                    saveStatus={saveStatus}
+                />
+            </>
         );
     }
 
