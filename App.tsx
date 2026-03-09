@@ -54,23 +54,16 @@ const App: React.FC = () => {
 
     const fetchAndApplyRemoteContent = useCallback(async (source: string) => {
         const { data, error } = await getSiteContent('home');
-        console.log("[supabase][site_content] getSiteContent('home')", {
-            source,
-            data,
-            error,
-        });
 
         if (!isMountedRef.current) {
             return { data, error };
         }
 
+        if (source === 'bootstrap') {
+            setRemoteContentReady(true);
+        }
+
         if (error || !data?.content) {
-            if (error) {
-                console.error("[supabase][site_content] getSiteContent('home') error", {
-                    source,
-                    error,
-                });
-            }
             return { data, error };
         }
 
@@ -84,53 +77,75 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        void fetchAndApplyRemoteContent('bootstrap');
+    }, [fetchAndApplyRemoteContent]);
+
+    useEffect(() => {
         saveLocalSiteContent(siteContent);
     }, [siteContent]);
 
     useEffect(() => {
-        console.log("REALTIME EFFECT RUNNING");
-        if (!supabase) {
-            return;
-        }
+        if (!supabase) return;
 
         const channel = supabase
-            .channel('site_content_realtime')
+            .channel('site_content_updates')
             .on(
                 'postgres_changes',
                 {
                     event: '*',
                     schema: 'public',
                     table: 'site_content',
-                    filter: 'id=eq.home',
                 },
                 async (payload) => {
-                    console.log('REALTIME PAYLOAD:', payload);
-
-                    const nextRaw = (payload.new as { content?: unknown } | null)?.content;
-                    if (!nextRaw) {
-                        return;
-                    }
-
-                    const normalized = ensureContentShape(nextRaw as Partial<typeof siteContent>);
-                    const snapshot = JSON.stringify(normalized);
-
-                    if (snapshot === lastRemoteSnapshotRef.current) {
-                        console.log("Skipping identical snapshot");
-                        return;
-                    }
-
-                    console.log("Applying realtime update");
-                    await fetchAndApplyRemoteContent("realtime");
+                    console.log('REALTIME UPDATE RECEIVED', payload);
+                    await fetchAndApplyRemoteContent('realtime');
                 }
             )
             .subscribe((status) => {
-                console.log("REALTIME STATUS:", status);
+                console.log('REALTIME STATUS:', status);
             });
 
         return () => {
-            supabase.removeChannel(channel);
+            void supabase.removeChannel(channel);
         };
     }, [fetchAndApplyRemoteContent]);
+
+    useEffect(() => {
+        if (view !== 'admin-content' || !supabase || !remoteContentReady) {
+            return;
+        }
+
+        const snapshot = JSON.stringify(siteContent);
+        if (snapshot === lastRemoteSnapshotRef.current) {
+            return;
+        }
+
+        let cancelled = false;
+
+        const syncRemote = async () => {
+            setSaveStatus('saving');
+            const { error } = await saveRemoteSiteContent('home', siteContent);
+
+            if (cancelled) {
+                return;
+            }
+
+            if (error) {
+                setSaveStatus('error');
+                return;
+            }
+
+            lastRemoteSnapshotRef.current = snapshot;
+            setSaveStatus('saved');
+            saveLocalSiteContent(siteContent);
+        };
+
+        void syncRemote();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [siteContent, view, remoteContentReady]);
 
     useEffect(() => {
         if (!supabase) {
@@ -182,11 +197,6 @@ const App: React.FC = () => {
         () => (serviceIdFromHash == null ? null : siteContent.services.find((service) => service.id === serviceIdFromHash) || null),
         [serviceIdFromHash, siteContent.services]
     );
-
-    const handleForceRefreshFromSupabase = useCallback(() => {
-        console.log("[supabase][site_content] manual force refresh requested");
-        void fetchAndApplyRemoteContent('manual-force-refresh');
-    }, [fetchAndApplyRemoteContent]);
 
     useEffect(() => {
         if (selectedService || view !== 'site') return;
@@ -243,15 +253,6 @@ const App: React.FC = () => {
 
         return (
             <>
-                <div className="fixed bottom-4 right-4 z-50">
-                    <button
-                        type="button"
-                        onClick={handleForceRefreshFromSupabase}
-                        className="rounded-md border border-brand-brown/30 bg-white px-3 py-2 text-xs font-medium text-brand-brown shadow-sm hover:bg-brand-beige"
-                    >
-                        Force refresh from Supabase
-                    </button>
-                </div>
                 <AdminDashboard
                     content={siteContent}
                     onChange={setSiteContent}

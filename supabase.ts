@@ -1,11 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 import { Service, ServiceCategory } from './types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const normalizeEnvValue = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') {
+        return undefined;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return undefined;
+    }
+    return trimmed.replace(/^['"]+|['"]+$/g, '');
+};
 
-console.log("SUPABASE URL:", supabaseUrl)
-console.log("SUPABASE KEY:", supabaseAnonKey)
+const supabaseUrl = normalizeEnvValue(import.meta.env.VITE_SUPABASE_URL);
+const supabaseAnonKey = normalizeEnvValue(import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 const hasValidUrl = Boolean(
     supabaseUrl &&
